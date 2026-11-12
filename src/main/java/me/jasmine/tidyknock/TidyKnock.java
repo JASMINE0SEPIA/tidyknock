@@ -22,6 +22,8 @@ public class TidyKnock implements ModInitializer {
 		// Proceed with mild caution.
 
 		LOGGER.info("Hello Fabric world!");
+
+		KnockHandler.register(); //模组启动时把上面那个监听器真正挂上
 	}
 
 	public static Identifier id(String path) {
