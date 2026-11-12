@@ -71,9 +71,9 @@ public final class KnockHandler {
 	// 显示在动作栏 (快捷栏上方) 的一行字
 	private static Component summary(ItemSorter.Result result) {
 		if (result.moved().isEmpty()) {
-			return Component.literal("没有可以归位的物品");
+			return Component.literal("不知道要放到哪里");
 		}
-		String text = "已归位 " + result.moved().size() + " 种";
+		String text = "放进去了 " + result.moved().size() + " 种东西";
 		if (!result.leftover().isEmpty()) {
 			text += ", " + result.leftover().size() + " 种无处可去";
 		}
