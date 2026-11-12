@@ -1,8 +1,13 @@
 package me.jasmine.tidyknock;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.BlockPos;
@@ -11,13 +16,14 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
-// 这一部分负责归位的飞行动画
-// 纯视觉效果: 动画开始时物品早就已经放进箱子了
+// 这一部分负责归位表演: 按节奏一发一发地真实搬运, 每发配一个飞行动画
+// 每一发起飞的瞬间物品就已经进箱子了, 飞行本身是纯视觉效果
 public final class FlightAnimator {
 
 	// 每件物品从起飞到钻进箱子用多少 tick (20 tick = 1 秒)
@@ -30,20 +36,39 @@ public final class FlightAnimator {
 	private static final double MIN_ARC = 1.0;
 	private static final double MAX_ARC = 5.0;
 
-	// 所有物品依次起飞的总时长预算, 种类越多, 间隔越短
-	private static final int LAUNCH_BUDGET_TICKS = 30;
-	// 但间隔最短 1 tick, 最长 4 tick
-	private static final int MIN_INTERVAL = 1;
-	private static final int MAX_INTERVAL = 4;
+	// 所有发依次起飞的时间窗口, 不含最后一发的飞行时间
+	// 42 + 18 = 60 tick, 所以整场表演最长 3 秒
+	private static final double LAUNCH_WINDOW_TICKS = 42;
+	// 但间隔最短 0.25 tick (1 tick 能发 4 个), 最长 2 tick
+	private static final double MIN_INTERVAL = 0.25;
+	private static final double MAX_INTERVAL = 2;
 
 	// 自己数的 tick, 用来安排起飞时间
 	private static int now = 0;
-	// 排队等起飞的
-	private static final List<Waiting> waiting = new ArrayList<>();
-	// 正在飞的
+	// 每个玩家正在进行的归位表演, 一个玩家同时只有一场
+	private static final Map<UUID, Show> shows = new HashMap<>();
+	// 正在飞的物品模型
 	private static final List<Flying> flying = new ArrayList<>();
 
-	private record Waiting(ServerLevel level, Player player, ItemSorter.Flight flight, int launchAt) {
+	// 一场归位表演: 按顺序一发一发地真实搬运, 并配上飞行动画
+	private static final class Show {
+		ServerLevel level;
+		Player player;
+		List<ItemSorter.Shot> shots;
+		int startTick;
+		double interval;
+		// 下一发是第几发
+		int next;
+		// 最后一件物品落地的时间, 到点才显示结果
+		int endTick;
+		// 这一场里已经弹过盖子的箱子
+		Set<Storage> opened = new HashSet<>();
+		// 真的搬成功了的物品种类, 结束时显示在动作栏
+		Set<Item> moved = new HashSet<>();
+
+		int launchTickOf(int index) {
+			return startTick + (int) (index * interval);
+		}
 	}
 
 	// 飞行中的一件物品, age 每 tick 都要变, 所以用普通的类而不是 record
@@ -65,27 +90,49 @@ public final class FlightAnimator {
 		ServerTickEvents.END_SERVER_TICK.register(server -> tick());
 	}
 
-	// 把一次归位的飞行清单排进队列, 一件一件隔开起飞
-	public static void play(ServerLevel level, Player player, List<ItemSorter.Flight> flights) {
-		if (flights.isEmpty()) {
+	// 开始一场归位表演
+	public static void start(ServerLevel level, Player player, List<ItemSorter.Shot> shots) {
+		if (shots.isEmpty()) {
 			return;
 		}
-		int interval = Math.clamp(LAUNCH_BUDGET_TICKS / flights.size(), MIN_INTERVAL, MAX_INTERVAL);
-		for (int i = 0; i < flights.size(); i++) {
-			waiting.add(new Waiting(level, player, flights.get(i), now + i * interval));
+
+		// 上一场还没演完又敲了一次: 把上一场剩下的发瞬间搬完, 再开始新的一场
+		Show previous = shows.remove(player.getUUID());
+		if (previous != null) {
+			finishInstantly(previous);
 		}
+
+		Show show = new Show();
+		show.level = level;
+		show.player = player;
+		show.shots = shots;
+		show.startTick = now + 1;
+		show.endTick = now;
+		show.interval = Math.clamp(LAUNCH_WINDOW_TICKS / shots.size(), MIN_INTERVAL, MAX_INTERVAL);
+		shows.put(player.getUUID(), show);
 	}
 
 	private static void tick() {
 		now++;
 
-		// 到点的物品起飞
-		Iterator<Waiting> queue = waiting.iterator();
-		while (queue.hasNext()) {
-			Waiting next = queue.next();
-			if (next.launchAt() <= now) {
-				flying.add(launch(next));
-				queue.remove();
+		// 每场表演里到点的发起飞
+		Iterator<Show> running = shows.values().iterator();
+		while (running.hasNext()) {
+			Show show = running.next();
+			// 玩家下线或者换了维度, 就不演了
+			// 没起飞的发还没真正搬过, 物品都还好好地在背包里, 直接取消就行
+			if (show.player.isRemoved() || show.player.level() != show.level) {
+				running.remove();
+				continue;
+			}
+			while (show.next < show.shots.size() && show.launchTickOf(show.next) <= now) {
+				fire(show, show.shots.get(show.next), true);
+				show.next++;
+			}
+			// 最后一发也起飞了, 还要等它飞到箱子, 再显示结果
+			if (show.next >= show.shots.size() && now >= show.endTick) {
+				KnockHandler.showSummary(show.player, show.moved);
+				running.remove();
 			}
 		}
 
@@ -103,17 +150,43 @@ public final class FlightAnimator {
 		}
 	}
 
-	// 在玩家身边生成一个物品模型, 并算好它的航线
-	private static Flying launch(Waiting next) {
+	// 执行一发: 先真实地搬, 搬成功了才配上动画, 保证看到的都是真的
+	private static void fire(Show show, ItemSorter.Shot shot, boolean animate) {
+		int moved = ItemSorter.transfer(show.level, show.player, shot);
+		if (moved == 0) {
+			return;
+		}
+		show.moved.add(shot.item());
+		// 临时: 每个箱子在一场表演里只弹一次盖子, 之后会改成跟着飞行时间开关
+		if (show.opened.add(shot.target())) {
+			shot.target().container().startOpen(show.player);
+		}
+		if (animate) {
+			flying.add(launch(show.level, show.player, shot));
+			// 最后一件飞完的时间, 用来决定什么时候显示结果
+			show.endTick = Math.max(show.endTick, now + FLIGHT_TICKS);
+		}
+	}
+
+	// 把一场表演剩下的发瞬间搬完, 不播动画
+	private static void finishInstantly(Show show) {
+		while (show.next < show.shots.size()) {
+			fire(show, show.shots.get(show.next), false);
+			show.next++;
+		}
+		KnockHandler.showSummary(show.player, show.moved);
+	}
+
+	// 在玩家眼前生成一个物品模型, 并算好它的航线
+	private static Flying launch(ServerLevel level, Player player, ItemSorter.Shot shot) {
 		Flying item = new Flying();
-		Player player = next.player();
-		List<BlockPos> blocks = next.flight().target().blocks();
+		List<BlockPos> blocks = shot.target().blocks();
 
 		// 起点: 玩家眼睛正前方, 稍微偏下, 保证一出现就在视野里, 像是从手里抛出去
 		item.start = player.getEyePosition().add(player.getLookAngle().scale(START_AHEAD)).add(0, -0.4, 0);
 
 		// 终点: 箱子开口那一面的正中心, 大箱子取两格的中点
-		Vec3 outward = openingOf(next.level(), blocks.get(0)).getUnitVec3();
+		Vec3 outward = openingOf(level, blocks.get(0)).getUnitVec3();
 		item.end = centerOf(blocks).add(outward.scale(0.5));
 		// 抬手高度: 近的轻轻一抛, 远的抛高一点
 		double arc = Math.clamp(item.start.distanceTo(item.end) * ARC_RATIO, MIN_ARC, MAX_ARC);
@@ -123,14 +196,14 @@ public final class FlightAnimator {
 		item.control2 = item.end.add(outward.scale(arc));
 
 		// 展示实体: 原版用来在空中摆放物品模型的实体, 摸不到也捡不起
-		Display.ItemDisplay entity = new Display.ItemDisplay(EntityTypes.ITEM_DISPLAY, next.level());
-		entity.setItemStack(next.flight().icon().copy());
+		Display.ItemDisplay entity = new Display.ItemDisplay(EntityTypes.ITEM_DISPLAY, level);
+		entity.setItemStack(shot.icon().copy());
 		// 按掉落物的样子显示, 大小正合适
 		entity.setItemTransform(ItemDisplayContext.GROUND);
 		// 服务端每次挪动它, 客户端用 1 tick 平滑地滑过去, 而不是一格一格地跳
 		entity.setPosRotInterpolationDuration(1);
 		entity.setPos(item.start);
-		next.level().addFreshEntity(entity);
+		level.addFreshEntity(entity);
 
 		item.entity = entity;
 		return item;

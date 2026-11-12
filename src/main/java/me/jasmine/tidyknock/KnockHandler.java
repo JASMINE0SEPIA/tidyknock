@@ -3,17 +3,20 @@ package me.jasmine.tidyknock;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.ChestBlock;
 
-// 这一部分负责识别"潜行 + 左键敲箱子"
+// 这一部分负责识别 "潜行 + 左键敲箱子", 然后把归位交给动画
 public final class KnockHandler {
 
 	private KnockHandler() {
@@ -52,19 +55,14 @@ public final class KnockHandler {
 						.comparing((ChestRule rule) -> !rule.labeled())
 						.thenComparingDouble(rule -> rule.storage().blocks().get(0).distSqr(playerPos)));
 
-				ItemSorter.Result result = ItemSorter.sortInto(player, rules);
-
-				// 收到东西的箱子弹一下盖子
-				// startOpen 是原版玩家开箱时调用的方法, 开盖动画和音效都是它自带的
-				// 原版 5 tick (0.25 秒) 后会复查 "还有没有人开着这个箱子", 发现没有就自己关上
-				for (Storage storage : result.touched()) {
-					storage.container().startOpen(player);
+				// 先演算: 算出每一发搬几个, 去哪, 真实物品一个都不动
+				List<ItemSorter.Shot> shots = ItemSorter.plan(player, rules);
+				if (shots.isEmpty()) {
+					player.sendOverlayMessage(Component.literal("不知道要放到哪里"));
+				} else {
+					// 交给动画: 每发起飞时才真正搬这一发
+					FlightAnimator.start((ServerLevel) level, player, shots);
 				}
-
-				player.sendOverlayMessage(summary(result));
-
-				// 物品已经放好了, 再按清单演一遍飞过去的动画
-				FlightAnimator.play((ServerLevel) level, player, result.flights());
 			}
 
 			// 返回 SUCCESS 表示 "左键已接管", 所以箱子不会开始被挖
@@ -72,14 +70,20 @@ public final class KnockHandler {
 		});
 	}
 
+	// 一场表演结束时调用, 把结果显示在动作栏
+	public static void showSummary(Player player, Set<Item> moved) {
+		Set<Item> leftover = ItemSorter.leftoverKinds(player);
+		player.sendOverlayMessage(summary(moved, leftover));
+	}
+
 	// 显示在动作栏 (快捷栏上方) 的一行字
-	private static Component summary(ItemSorter.Result result) {
-		if (result.moved().isEmpty()) {
+	private static Component summary(Set<Item> moved, Set<Item> leftover) {
+		if (moved.isEmpty()) {
 			return Component.literal("不知道要放到哪里");
 		}
-		String text = "放进去了 " + result.moved().size() + " 种东西";
-		if (!result.leftover().isEmpty()) {
-			text += ", " + result.leftover().size() + " 种无处可去";
+		String text = "放进去了 " + moved.size() + " 种东西";
+		if (!leftover.isEmpty()) {
+			text += ", " + leftover.size() + " 种无处可去";
 		}
 		return Component.literal(text);
 	}
