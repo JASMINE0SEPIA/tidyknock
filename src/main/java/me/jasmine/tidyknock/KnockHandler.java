@@ -1,13 +1,13 @@
 package me.jasmine.tidyknock;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.ChestBlock;
@@ -42,22 +42,19 @@ public final class KnockHandler {
 			if (!level.isClientSide()) {
 				player.sendSystemMessage(Component.literal("敲了敲了" + pos.toShortString())); // 敲了敲了好欸
 
-				List<BlockPos> chests = ChestFinder.findNearby(level, pos);
-				player.sendSystemMessage(Component.literal("附近有 " + chests.size() + " 个箱子"));
-
-				// 规则打印
-				for (BlockPos chestPos : chests) {
-					ChestRule rule = ChestRule.of(level, chestPos);
-					MutableComponent line = Component.literal(chestPos.toShortString())
-							.append(rule.labeled() ? " [展示框] 收: " : " [按内容] 收: ");
-					if (rule.items().isEmpty()) {
-						line.append("(什么都不收)");
-					}
-					for (Item item : rule.items()) {
-						line.append(Component.translatable(item.getDescriptionId())).append(" ");
-					}
-					player.sendSystemMessage(line);
+				List<ChestRule> rules = new ArrayList<>();
+				for (Storage storage : ChestFinder.findNearby(level, pos)) {
+					rules.add(ChestRule.of(level, storage));
 				}
+
+				// 排优先级: 贴了展示框的排前面, 同一级里离玩家近的排前面
+				BlockPos playerPos = player.blockPosition();
+				rules.sort(Comparator
+						.comparing((ChestRule rule) -> !rule.labeled())
+						.thenComparingDouble(rule -> rule.storage().blocks().get(0).distSqr(playerPos)));
+
+				int moved = ItemSorter.sortInto(player, rules);
+				player.sendSystemMessage(Component.literal("归位了 " + moved + " 个物品"));
 			}
 
 			// 返回 SUCCESS 表示 "左键已接管", 所以箱子不会开始被挖
