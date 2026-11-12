@@ -8,6 +8,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BarrelBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.RandomizableContainerBlockEntity;
 
 // 这一部分负责找出某个位置附近的所有箱子和木桶
 public final class ChestFinder {
@@ -32,11 +33,19 @@ public final class ChestFinder {
 			}
 
 			BlockEntity blockEntity = level.getBlockEntity(pos);
-			if (blockEntity instanceof ChestBlockEntity || blockEntity instanceof BarrelBlockEntity) {
-				// betweenClosed 为了省内存, 一直在改同一个 pos 对象
-				// 要存下来必须用 immutable() 复制一份定格的坐标
-				found.add(pos.immutable());
+			if (!(blockEntity instanceof ChestBlockEntity) && !(blockEntity instanceof BarrelBlockEntity)) {
+				continue;
 			}
+
+			// 还没生成战利品的箱子 (比如没人开过的地牢箱) 不算
+			// 只要读一下它的格子, 游戏就会当场生成战利品, 相当于替你开了
+			if (blockEntity instanceof RandomizableContainerBlockEntity loot && loot.getLootTable() != null) {
+				continue;
+			}
+
+			// betweenClosed 为了省内存, 一直在改同一个 pos 对象
+			// 要存下来必须用 immutable() 复制一份定格的坐标
+			found.add(pos.immutable());
 		}
 
 		return found;

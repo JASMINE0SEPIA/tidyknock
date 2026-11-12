@@ -5,7 +5,9 @@ import java.util.List;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.ChestBlock;
@@ -42,6 +44,20 @@ public final class KnockHandler {
 
 				List<BlockPos> chests = ChestFinder.findNearby(level, pos);
 				player.sendSystemMessage(Component.literal("附近有 " + chests.size() + " 个箱子"));
+
+				// 规则打印
+				for (BlockPos chestPos : chests) {
+					ChestRule rule = ChestRule.of(level, chestPos);
+					MutableComponent line = Component.literal(chestPos.toShortString())
+							.append(rule.labeled() ? " [展示框] 收: " : " [按内容] 收: ");
+					if (rule.items().isEmpty()) {
+						line.append("(什么都不收)");
+					}
+					for (Item item : rule.items()) {
+						line.append(Component.translatable(item.getDescriptionId())).append(" ");
+					}
+					player.sendSystemMessage(line);
+				}
 			}
 
 			// 返回 SUCCESS 表示 "左键已接管", 所以箱子不会开始被挖
