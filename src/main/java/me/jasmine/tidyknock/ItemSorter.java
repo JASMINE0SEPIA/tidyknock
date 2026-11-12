@@ -19,10 +19,11 @@ public final class ItemSorter {
 		Inventory inventory = player.getInventory();
 		int moved = 0;
 
-		// 玩家物品栏的 0~8 格是快捷栏, 不动; 只处理 9~35 这 27 格背包
-		for (int slot = Inventory.SELECTION_SIZE; slot < Inventory.INVENTORY_SIZE; slot++) {
+		// 处理 0~35 格: 0~8 是快捷栏, 9~35 是背包
+		// 36 往后是盔甲和副手, 不动
+		for (int slot = 0; slot < Inventory.INVENTORY_SIZE; slot++) {
 			ItemStack stack = inventory.getItem(slot);
-			if (stack.isEmpty()) {
+			if (stack.isEmpty() || isKept(inventory, slot, stack)) {
 				continue;
 			}
 
@@ -41,6 +42,17 @@ public final class ItemSorter {
 
 		inventory.setChanged();
 		return moved;
+	}
+
+	// 留在身上不归位的东西
+	private static boolean isKept(Inventory inventory, int slot, ItemStack stack) {
+		// 手上正拿着的那一格
+		if (slot == inventory.getSelectedSlot()) {
+			return true;
+		}
+		// 快捷栏里的工具: 这里把 "有耐久度的东西" 当作工具
+		// 镐斧锹锄, 剑, 弓, 剪刀, 钓鱼竿, 打火石, 盾牌都算; 背包里的工具照常归位
+		return Inventory.isHotbarSlot(slot) && stack.isDamageableItem();
 	}
 
 	// 尽量把 stack 塞进 container, 塞进去多少就从 stack 里扣掉多少
