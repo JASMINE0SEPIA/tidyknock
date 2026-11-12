@@ -43,7 +43,7 @@ public final class KnockHandler {
 				player.sendSystemMessage(Component.literal("敲了敲了" + pos.toShortString())); // 敲了敲了好欸
 
 				List<ChestRule> rules = new ArrayList<>();
-				for (Storage storage : ChestFinder.findNearby(level, pos)) {
+				for (Storage storage : ChestFinder.findNearby(level, player, pos)) {
 					rules.add(ChestRule.of(level, storage));
 				}
 

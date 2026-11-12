@@ -7,9 +7,11 @@ import java.util.Set;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.Container;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BarrelBlockEntity;
+import net.minecraft.world.level.block.entity.BaseContainerBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.entity.RandomizableContainerBlockEntity;
@@ -25,7 +27,7 @@ public final class ChestFinder {
 	private ChestFinder() {
 	}
 
-	public static List<Storage> findNearby(Level level, BlockPos center) {
+	public static List<Storage> findNearby(Level level, Player player, BlockPos center) {
 		List<Storage> found = new ArrayList<>();
 		// 大箱子的两半都会被扫到, 处理完一半就把另一半记在这里, 免得算两次
 		Set<BlockPos> seen = new HashSet<>();
@@ -67,7 +69,7 @@ public final class ChestFinder {
 				container = (BarrelBlockEntity) blockEntity;
 			}
 
-			if (container == null || hasUnrolledLoot(level, blocks)) {
+			if (container == null || !canTouch(level, player, blocks)) {
 				continue;
 			}
 
@@ -77,15 +79,27 @@ public final class ChestFinder {
 		return found;
 	}
 
-	// 还没生成战利品的箱子 (比如没人开过的地牢箱) 不算
-	// 只要读一下它的格子, 游戏就会当场生成战利品, 相当于替你开了
-	private static boolean hasUnrolledLoot(Level level, List<BlockPos> blocks) {
+	// 这个玩家能不能动这个箱子, 大箱子的每一半都要过关
+	private static boolean canTouch(Level level, Player player, List<BlockPos> blocks) {
 		for (BlockPos pos : blocks) {
-			if (level.getBlockEntity(pos) instanceof RandomizableContainerBlockEntity loot
-					&& loot.getLootTable() != null) {
-				return true;
+			// 出生点保护区, 世界边界外这类地方, 原版本来就不让玩家碰
+			if (!level.mayInteract(player, pos)) {
+				return false;
+			}
+
+			BlockEntity blockEntity = level.getBlockEntity(pos);
+
+			// 上了锁的箱子, 玩家主手没拿着钥匙就不碰 (和原版开箱的规则一样)
+			if (blockEntity instanceof BaseContainerBlockEntity box && !box.canOpen(player)) {
+				return false;
+			}
+
+			// 还没生成战利品的箱子 (比如没人开过的地牢箱) 不算
+			// 只要读一下它的格子, 游戏就会当场生成战利品, 相当于替你开了
+			if (blockEntity instanceof RandomizableContainerBlockEntity loot && loot.getLootTable() != null) {
+				return false;
 			}
 		}
-		return false;
+		return true;
 	}
 }
