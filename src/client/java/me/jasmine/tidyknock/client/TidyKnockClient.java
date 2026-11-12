@@ -5,6 +5,6 @@ import net.fabricmc.api.ClientModInitializer;
 public class TidyKnockClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
-		// This entrypoint is suitable for setting up client-specific logic, such as rendering.
+		// 客户端专用的入口, 适合放渲染这类只在客户端运行的逻辑
 	}
 }
