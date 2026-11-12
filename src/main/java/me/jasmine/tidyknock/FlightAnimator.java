@@ -22,14 +22,13 @@ public final class FlightAnimator {
 
 	// 每件物品从起飞到钻进箱子用多少 tick (20 tick = 1 秒)
 	private static final int FLIGHT_TICKS = 18;
-	// 前 40% 的时间滑到半空, 后 60% 的时间俯冲进箱子
-	private static final double GLIDE_PART = 0.4;
 	// 起点在玩家眼睛前方多远
 	private static final double START_AHEAD = 0.8;
-	// 悬停点比起点和入口中较高的那个再高多少格
-	private static final double HOVER_HEIGHT = 0.6;
-	// 入口前方多远开始对准开口往里钻
-	private static final double APPROACH_DISTANCE = 1.0;
+	// 抛的力度: 抬手高度 = 距离 x 这个比例, 再限制在最小和最大值之间
+	// 比例要大于 0.5 才有 "快-慢-快" 的感觉, 越大越明显
+	private static final double ARC_RATIO = 0.7;
+	private static final double MIN_ARC = 1.0;
+	private static final double MAX_ARC = 5.0;
 
 	// 所有物品依次起飞的总时长预算, 种类越多, 间隔越短
 	private static final int LAUNCH_BUDGET_TICKS = 30;
@@ -50,9 +49,10 @@ public final class FlightAnimator {
 	// 飞行中的一件物品, age 每 tick 都要变, 所以用普通的类而不是 record
 	private static final class Flying {
 		Display.ItemDisplay entity;
+		// 一条三次贝塞尔曲线的四个点: 起点, 两个控制点, 终点
 		Vec3 start;
-		Vec3 hover;
-		Vec3 approach;
+		Vec3 control1;
+		Vec3 control2;
 		Vec3 end;
 		int age;
 	}
@@ -115,13 +115,12 @@ public final class FlightAnimator {
 		// 终点: 箱子开口那一面的正中心, 大箱子取两格的中点
 		Vec3 outward = openingOf(next.level(), blocks.get(0)).getUnitVec3();
 		item.end = centerOf(blocks).add(outward.scale(0.5));
-		// 入口前方的一点: 最后一段会从这里顺着开口方向钻进去
-		item.approach = item.end.add(outward.scale(APPROACH_DISTANCE));
-
-		// 悬停点: 从起点往入口方向走一小段, 再抬高一点
-		Vec3 ahead = item.start.lerp(item.approach, 0.3);
-		double hoverY = Math.max(item.start.y, item.approach.y) + HOVER_HEIGHT;
-		item.hover = new Vec3(ahead.x, hoverY, ahead.z);
+		// 抬手高度: 近的轻轻一抛, 远的抛高一点
+		double arc = Math.clamp(item.start.distanceTo(item.end) * ARC_RATIO, MIN_ARC, MAX_ARC);
+		// 控制点 1: 起点正上方, 决定物品 "往上抛出去" 的方向和力度
+		item.control1 = item.start.add(0, arc, 0);
+		// 控制点 2: 开口外侧, 决定物品最后 "顺着开口落进去" 的方向和力度
+		item.control2 = item.end.add(outward.scale(arc));
 
 		// 展示实体: 原版用来在空中摆放物品模型的实体, 摸不到也捡不起
 		Display.ItemDisplay entity = new Display.ItemDisplay(EntityTypes.ITEM_DISPLAY, next.level());
@@ -137,22 +136,17 @@ public final class FlightAnimator {
 		return item;
 	}
 
-	// progress 从 0 到 1, 算出这一刻物品应该在哪
-	private static Vec3 positionAt(Flying item, double progress) {
-		if (progress < GLIDE_PART) {
-			// 第一段: 滑出, 越滑越慢 (缓出: 一开始快, 快到悬停点时停住)
-			double t = progress / GLIDE_PART;
-			double eased = 1 - Math.pow(1 - t, 3);
-			return item.start.lerp(item.hover, eased);
-		}
-		// 第二段: 俯冲, 越飞越快 (缓入: 从静止开始加速)
-		double t = (progress - GLIDE_PART) / (1 - GLIDE_PART);
-		double eased = t * t;
-		// 走一条弯线: 先朝入口前方拐过去, 最后顺着开口方向钻进去
-		// 做法是两次 lerp: 两条线段上各取一点, 再在这两点之间取一点 (二次贝塞尔曲线)
-		Vec3 a = item.hover.lerp(item.approach, eased);
-		Vec3 b = item.approach.lerp(item.end, eased);
-		return a.lerp(b, eased);
+	// t 从 0 到 1, 算出这一刻物品在三次贝塞尔曲线上的位置
+	// 不需要缓动函数: 控制点离得越远, 那一头就飞得越快
+	// 两个控制点都 "拉" 得够远, 中间自然就慢下来, 形成 "快-慢-快" 的抛物感
+	private static Vec3 positionAt(Flying item, double t) {
+		// 一层层 lerp 往下缩: 4 个点 -> 3 个点 -> 2 个点 -> 1 个点
+		Vec3 a = item.start.lerp(item.control1, t);
+		Vec3 b = item.control1.lerp(item.control2, t);
+		Vec3 c = item.control2.lerp(item.end, t);
+		Vec3 ab = a.lerp(b, t);
+		Vec3 bc = b.lerp(c, t);
+		return ab.lerp(bc, t);
 	}
 
 	// 开口朝哪: 木桶看它的朝向, 箱子永远朝上
