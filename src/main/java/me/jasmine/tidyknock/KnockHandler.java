@@ -61,6 +61,13 @@ public final class KnockHandler {
 				}
 
 				player.sendOverlayMessage(summary(result));
+
+				// 临时: 把飞行清单打印到聊天栏, 验证顺序和去向, 做动画时删掉
+				for (ItemSorter.Flight flight : result.flights()) {
+					player.sendSystemMessage(Component.empty()
+							.append(flight.icon().getHoverName())
+							.append(" -> " + flight.target().blocks().get(0).toShortString()));
+				}
 			}
 
 			// 返回 SUCCESS 表示 "左键已接管", 所以箱子不会开始被挖

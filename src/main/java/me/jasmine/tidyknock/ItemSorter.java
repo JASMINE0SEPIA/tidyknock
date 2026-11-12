@@ -1,5 +1,6 @@
 package me.jasmine.tidyknock;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -20,13 +21,19 @@ public final class ItemSorter {
 	// moved: 成功归位的物品种类
 	// leftover: 没地方放, 还留在身上的物品种类 (没有匹配的箱子, 或者箱子满了)
 	// touched: 收到了东西的箱子
-	public record Result(Set<Item> moved, Set<Item> leftover, Set<Storage> touched) {
+	// flights: 飞行清单, 按发生顺序排好, 给动画用
+	public record Result(Set<Item> moved, Set<Item> leftover, Set<Storage> touched, List<Flight> flights) {
+	}
+
+	// 一次飞行: 哪种物品 (icon 是飞行时显示的模型) 飞向哪个箱子
+	// 同一种物品去同一个箱子只飞一次, 不管背包里有几组
+	public record Flight(Item item, ItemStack icon, Storage target) {
 	}
 
 	// rules 要事先排好优先级, 越靠前的箱子越先被塞
 	public static Result sortInto(Player player, List<ChestRule> rules) {
 		Inventory inventory = player.getInventory();
-		Result result = new Result(new HashSet<>(), new HashSet<>(), new HashSet<>());
+		Result result = new Result(new HashSet<>(), new HashSet<>(), new HashSet<>(), new ArrayList<>());
 
 		// 处理 0~35 格: 0~8 是快捷栏, 9~35 是背包
 		// 36 往后是盔甲和副手, 不动
@@ -38,6 +45,8 @@ public final class ItemSorter {
 
 			// 先记下是什么物品: 整组都塞进去后 stack 会变空, 就看不出原来是什么了
 			Item item = stack.getItem();
+			// 飞行模型用 1 个的复制品, 附魔光效这类外观也会带上
+			ItemStack icon = stack.copyWithCount(1);
 			for (ChestRule rule : rules) {
 				if (stack.isEmpty()) {
 					break;
@@ -45,6 +54,7 @@ public final class ItemSorter {
 				if (rule.items().contains(item) && insert(rule.storage().container(), stack)) {
 					result.moved().add(item);
 					result.touched().add(rule.storage());
+					addFlight(result.flights(), new Flight(item, icon, rule.storage()));
 				}
 			}
 			// 塞不进去的部分还留在 stack 里, 也就是原地留在背包, 不会掉出来
@@ -55,6 +65,16 @@ public final class ItemSorter {
 
 		inventory.setChanged();
 		return result;
+	}
+
+	// 清单里已经有 "同种物品 -> 同一个箱子" 就不再重复加
+	private static void addFlight(List<Flight> flights, Flight flight) {
+		for (Flight existing : flights) {
+			if (existing.item() == flight.item() && existing.target() == flight.target()) {
+				return;
+			}
+		}
+		flights.add(flight);
 	}
 
 	// 留在身上不归位的东西
