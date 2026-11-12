@@ -7,6 +7,7 @@ import java.util.List;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Block;
@@ -62,12 +63,8 @@ public final class KnockHandler {
 
 				player.sendOverlayMessage(summary(result));
 
-				// 临时: 把飞行清单打印到聊天栏, 验证顺序和去向, 做动画时删掉
-				for (ItemSorter.Flight flight : result.flights()) {
-					player.sendSystemMessage(Component.empty()
-							.append(flight.icon().getHoverName())
-							.append(" -> " + flight.target().blocks().get(0).toShortString()));
-				}
+				// 物品已经放好了, 再按清单演一遍飞过去的动画
+				FlightAnimator.play((ServerLevel) level, player, result.flights());
 			}
 
 			// 返回 SUCCESS 表示 "左键已接管", 所以箱子不会开始被挖

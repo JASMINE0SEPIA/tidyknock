@@ -22,6 +22,7 @@ public class TidyKnock implements ModInitializer {
 		LOGGER.info("Hello Fabric world!");
 
 		KnockHandler.register(); // 模组启动时把上面那个监听器真正挂上
+		FlightAnimator.register(); // 飞行动画需要每个 tick 更新一次
 	}
 
 	public static Identifier id(String path) {
