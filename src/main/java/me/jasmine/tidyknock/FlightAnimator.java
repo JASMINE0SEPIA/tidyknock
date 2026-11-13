@@ -9,6 +9,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -62,6 +64,9 @@ public final class FlightAnimator {
 	private static final double MIN_INTERVAL = 0.25;
 	private static final double MAX_INTERVAL = 2;
 
+	// 贴在飞行模型身上的标签, 用来认出 "这是我们的模型"
+	private static final String FLIGHT_TAG = TidyKnock.MOD_ID + "_flight";
+
 	// 自己数的 tick, 用来安排起飞时间
 	private static int now = 0;
 	// 每个玩家正在进行的归位表演, 一个玩家同时只有一场
@@ -114,9 +119,33 @@ public final class FlightAnimator {
 	private FlightAnimator() {
 	}
 
-	// 在模组初始化时调用一次, 让 tick() 每个游戏刻都执行
+	// 在模组初始化时调用一次, 挂上需要的几个事件
 	public static void register() {
+		// 每个游戏刻都执行 tick()
 		ServerTickEvents.END_SERVER_TICK.register(server -> tick());
+
+		// 关服前 (单人游戏退回主菜单也算) 收拾干净
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> cleanUp());
+
+		// 兜底: 万一飞行模型还是被存进了存档 (比如游戏崩溃, 或者飞行途中区块被卸载)
+		// 下次从存档读出来时直接拒绝加载, 它就永远消失了
+		// isLoadedFromDisk 区分 "从存档读出来的" 和 "刚生成的", 刚生成的当然要放行
+		ServerEntityEvents.ALLOW_LOAD.register((entity, level, reason, isLoadedFromDisk) ->
+				!(isLoadedFromDisk && entity.entityTags().contains(FLIGHT_TAG)));
+	}
+
+	// 关上所有箱盖, 删掉所有飞行模型, 清空所有表演
+	// 没起飞的发还没真正搬过, 物品都还在背包里, 直接丢掉计划就行
+	private static void cleanUp() {
+		for (Flying item : flying) {
+			item.entity.discard();
+		}
+		flying.clear();
+		for (Lid lid : lids.values()) {
+			setLid(lid.level, lid.storage, false);
+		}
+		lids.clear();
+		shows.clear();
 	}
 
 	// 这个玩家是不是正在表演中
@@ -254,6 +283,7 @@ public final class FlightAnimator {
 		// 服务端每次挪动它, 客户端用 1 tick 平滑地滑过去, 而不是一格一格地跳
 		entity.setPosRotInterpolationDuration(1);
 		entity.setPos(item.start);
+		entity.addTag(FLIGHT_TAG);
 		level.addFreshEntity(entity);
 
 		item.entity = entity;
@@ -264,6 +294,10 @@ public final class FlightAnimator {
 	// 只改外观, 不碰原版的 "有几个人开着这个箱子" 计数, 所以不会和真正开箱的玩家打架
 	private static void setLid(ServerLevel level, Storage storage, boolean open) {
 		BlockPos first = storage.blocks().get(0);
+		// 箱子所在的区块已经卸载了 (玩家跑远了), 就别碰它, 不然会把区块强行加载回来
+		if (!level.isLoaded(first)) {
+			return;
+		}
 		BlockState state = level.getBlockState(first);
 		SoundEvent sound;
 		if (state.getBlock() instanceof ChestBlock chest) {
