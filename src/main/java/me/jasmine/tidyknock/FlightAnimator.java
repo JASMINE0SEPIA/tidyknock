@@ -90,16 +90,15 @@ public final class FlightAnimator {
 		ServerTickEvents.END_SERVER_TICK.register(server -> tick());
 	}
 
+	// 这个玩家是不是正在表演中
+	public static boolean isPlaying(Player player) {
+		return shows.containsKey(player.getUUID());
+	}
+
 	// 开始一场归位表演
 	public static void start(ServerLevel level, Player player, List<ItemSorter.Shot> shots) {
 		if (shots.isEmpty()) {
 			return;
-		}
-
-		// 上一场还没演完又敲了一次: 把上一场剩下的发瞬间搬完, 再开始新的一场
-		Show previous = shows.remove(player.getUUID());
-		if (previous != null) {
-			finishInstantly(previous);
 		}
 
 		Show show = new Show();
@@ -126,7 +125,7 @@ public final class FlightAnimator {
 				continue;
 			}
 			while (show.next < show.shots.size() && show.launchTickOf(show.next) <= now) {
-				fire(show, show.shots.get(show.next), true);
+				fire(show, show.shots.get(show.next));
 				show.next++;
 			}
 			// 最后一发也起飞了, 还要等它飞到箱子, 再显示结果
@@ -151,7 +150,7 @@ public final class FlightAnimator {
 	}
 
 	// 执行一发: 先真实地搬, 搬成功了才配上动画, 保证看到的都是真的
-	private static void fire(Show show, ItemSorter.Shot shot, boolean animate) {
+	private static void fire(Show show, ItemSorter.Shot shot) {
 		int moved = ItemSorter.transfer(show.level, show.player, shot);
 		if (moved == 0) {
 			return;
@@ -161,20 +160,9 @@ public final class FlightAnimator {
 		if (show.opened.add(shot.target())) {
 			shot.target().container().startOpen(show.player);
 		}
-		if (animate) {
-			flying.add(launch(show.level, show.player, shot));
-			// 最后一件飞完的时间, 用来决定什么时候显示结果
-			show.endTick = Math.max(show.endTick, now + FLIGHT_TICKS);
-		}
-	}
-
-	// 把一场表演剩下的发瞬间搬完, 不播动画
-	private static void finishInstantly(Show show) {
-		while (show.next < show.shots.size()) {
-			fire(show, show.shots.get(show.next), false);
-			show.next++;
-		}
-		KnockHandler.showSummary(show.player, show.moved);
+		flying.add(launch(show.level, show.player, shot));
+		// 最后一件飞完的时间, 用来决定什么时候显示结果
+		show.endTick = Math.max(show.endTick, now + FLIGHT_TICKS);
 	}
 
 	// 在玩家眼前生成一个物品模型, 并算好它的航线

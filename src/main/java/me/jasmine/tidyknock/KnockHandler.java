@@ -44,6 +44,12 @@ public final class KnockHandler {
 			// 这里说明条件全部满足
 			// 只在服务端做实际的事; 客户端那边直接返回 SUCCESS, 让它把这次敲击告诉服务端
 			if (!level.isClientSide()) {
+				// 按住左键时, 原版每个 tick 都会重新 "开始挖", 所以一次点击会连着触发好几次敲击
+				// 表演还没结束就不理会新的敲击, 但仍然返回 SUCCESS, 免得箱子被挖
+				if (FlightAnimator.isPlaying(player)) {
+					return InteractionResult.SUCCESS;
+				}
+
 				List<ChestRule> rules = new ArrayList<>();
 				for (Storage storage : ChestFinder.findNearby(level, player, pos)) {
 					rules.add(ChestRule.of(level, storage));
