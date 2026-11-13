@@ -13,6 +13,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.player.Player;
@@ -35,6 +36,14 @@ public final class FlightAnimator {
 	private static final double ARC_RATIO = 0.7;
 	private static final double MIN_ARC = 1.0;
 	private static final double MAX_ARC = 5.0;
+
+	// 随机散开: 每一发都偏一点点, 一把东西飞出去像个扇面
+	// 起点上下左右前后最多偏多少格, 像从手里一把抓出去
+	private static final double START_SPREAD = 0.15;
+	// 抛的高度最多高低多少 (0.2 = 20%)
+	private static final double ARC_SPREAD = 0.2;
+	// 路线向左右两侧最多偏多少格
+	private static final double SIDE_SPREAD = 0.4;
 
 	// 所有发依次起飞的时间窗口, 不含最后一发的飞行时间
 	// 42 + 18 = 60 tick, 所以整场表演最长 3 秒
@@ -165,21 +174,28 @@ public final class FlightAnimator {
 		show.endTick = Math.max(show.endTick, now + FLIGHT_TICKS);
 	}
 
-	// 在玩家眼前生成一个物品模型, 并算好它的航线
+	// 在玩家眼前生成一个物品模型, 并算好它的路线
 	private static Flying launch(ServerLevel level, Player player, ItemSorter.Shot shot) {
 		Flying item = new Flying();
 		List<BlockPos> blocks = shot.target().blocks();
+		RandomSource random = level.getRandom();
 
 		// 起点: 玩家眼睛正前方, 稍微偏下, 保证一出现就在视野里, 像是从手里抛出去
-		item.start = player.getEyePosition().add(player.getLookAngle().scale(START_AHEAD)).add(0, -0.4, 0);
+		// 再随机偏一点点, 不是每一发都从同一个点射出来
+		item.start = player.getEyePosition().add(player.getLookAngle().scale(START_AHEAD)).add(0, -0.4, 0)
+				.add(jitter(random, START_SPREAD), jitter(random, START_SPREAD), jitter(random, START_SPREAD));
 
 		// 终点: 箱子开口那一面的正中心, 大箱子取两格的中点
+		// 终点不随机, 保证每一发最后都准确落进开口
 		Vec3 outward = openingOf(level, blocks.get(0)).getUnitVec3();
 		item.end = centerOf(blocks).add(outward.scale(0.5));
-		// 抬手高度: 近的轻轻一抛, 远的抛高一点
-		double arc = Math.clamp(item.start.distanceTo(item.end) * ARC_RATIO, MIN_ARC, MAX_ARC);
+		// 抬手高度: 近的轻轻一抛, 远的抛高一点, 再随机高低一点
+		double arc = Math.clamp(item.start.distanceTo(item.end) * ARC_RATIO, MIN_ARC, MAX_ARC)
+				* (1 + jitter(random, ARC_SPREAD));
 		// 控制点 1: 起点正上方, 决定物品 "往上抛出去" 的方向和力度
-		item.control1 = item.start.add(0, arc, 0);
+		// 再往路线的左边或右边偏一点, 整条曲线就会向那一侧鼓出去
+		item.control1 = item.start.add(0, arc, 0)
+				.add(sideways(item.start, item.end).scale(jitter(random, SIDE_SPREAD)));
 		// 控制点 2: 开口外侧, 决定物品最后 "顺着开口落进去" 的方向和力度
 		item.control2 = item.end.add(outward.scale(arc));
 
@@ -208,6 +224,24 @@ public final class FlightAnimator {
 		Vec3 ab = a.lerp(b, t);
 		Vec3 bc = b.lerp(c, t);
 		return ab.lerp(bc, t);
+	}
+
+	// 在 -amount 到 +amount 之间随机取数
+	// triangle 取到 0 附近的机会大, 取到两头的机会小, 所以理论上大多只偏一点点, 偶尔偏得多🤔
+	private static double jitter(RandomSource random, double amount) {
+		return random.triangle(0.0, amount);
+	// 理论是对的
+	}
+
+	// 和路线垂直, 水平指向侧面的方向, 长度为 1
+	private static Vec3 sideways(Vec3 from, Vec3 to) {
+		// 只看水平方向: 把 (x, z) 转 90 度就是 (-z, x)
+		Vec3 flat = new Vec3(to.x - from.x, 0, to.z - from.z);
+		if (flat.lengthSqr() < 1.0E-4) {
+			// 箱子就在正下方或正上方, 没有 "侧面" 可言, 随便取一个水平方向
+			return new Vec3(1, 0, 0);
+		}
+		return new Vec3(-flat.z, 0, flat.x).normalize();
 	}
 
 	// 开口朝哪: 木桶看它的朝向, 箱子永远朝上
