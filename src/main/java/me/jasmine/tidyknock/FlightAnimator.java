@@ -13,6 +13,8 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.EntityTypes;
@@ -44,6 +46,9 @@ public final class FlightAnimator {
 	private static final double ARC_SPREAD = 0.2;
 	// 路线向左右两侧最多偏多少格
 	private static final double SIDE_SPREAD = 0.4;
+
+	// 落进箱子时 "啵" 一声的音量, 原版捡东西是 0.2, 连发时声音多, 稍微再小一点
+	private static final float LANDING_VOLUME = 0.15f;
 
 	// 所有发依次起飞的时间窗口, 不含最后一发的飞行时间
 	// 42 + 18 = 60 tick, 所以整场表演最长 3 秒
@@ -83,6 +88,9 @@ public final class FlightAnimator {
 	// 飞行中的一件物品, age 每 tick 都要变, 所以用普通的类而不是 record
 	private static final class Flying {
 		Display.ItemDisplay entity;
+		ServerLevel level;
+		// 飞向哪个箱子, 落地放音效时用来判断 "这个箱子这一刻是不是已经响过了"
+		Storage target;
 		// 一条三次贝塞尔曲线的四个点: 起点, 两个控制点, 终点
 		Vec3 start;
 		Vec3 control1;
@@ -145,11 +153,16 @@ public final class FlightAnimator {
 		}
 
 		// 正在飞的往前挪一步, 飞完的删掉
+		// 这一 tick 已经 "啵" 过的箱子, 同一个箱子同一刻落进好几发也只响一声
+		Set<Storage> sounded = new HashSet<>();
 		Iterator<Flying> air = flying.iterator();
 		while (air.hasNext()) {
 			Flying item = air.next();
 			item.age++;
 			if (item.age >= FLIGHT_TICKS) {
+				if (sounded.add(item.target)) {
+					playLandingSound(item);
+				}
 				item.entity.discard();
 				air.remove();
 			} else {
@@ -177,6 +190,8 @@ public final class FlightAnimator {
 	// 在玩家眼前生成一个物品模型, 并算好它的路线
 	private static Flying launch(ServerLevel level, Player player, ItemSorter.Shot shot) {
 		Flying item = new Flying();
+		item.level = level;
+		item.target = shot.target();
 		List<BlockPos> blocks = shot.target().blocks();
 		RandomSource random = level.getRandom();
 
@@ -211,6 +226,16 @@ public final class FlightAnimator {
 
 		item.entity = entity;
 		return item;
+	}
+
+	// 物品落进箱子时 "啵" 一声, 用的是原版捡东西的音效
+	private static void playLandingSound(Flying item) {
+		RandomSource random = item.level.getRandom();
+		// 音高照抄原版捡东西的算法: 每次随机高一点或低一点, 连发时 "啵啵啵" 高低错落, 不机械
+		float pitch = ((random.nextFloat() - random.nextFloat()) * 0.7f + 1.0f) * 2.0f;
+		// 第一个参数 null 表示 "不是某个玩家自己发出的声音", 所以周围所有玩家都能听到
+		item.level.playSound(null, item.end.x, item.end.y, item.end.z,
+				SoundEvents.ITEM_PICKUP, SoundSource.PLAYERS, LANDING_VOLUME, pitch);
 	}
 
 	// t 从 0 到 1, 算出这一刻物品在三次贝塞尔曲线上的位置
