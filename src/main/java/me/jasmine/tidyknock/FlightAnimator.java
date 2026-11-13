@@ -13,6 +13,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.RandomSource;
@@ -22,6 +23,8 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.level.block.BarrelBlock;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
@@ -49,6 +52,8 @@ public final class FlightAnimator {
 
 	// 落进箱子时 "啵" 一声的音量, 原版捡东西是 0.2, 连发时声音多, 稍微再小一点
 	private static final float LANDING_VOLUME = 0.15f;
+	// 最后一发落进去之后, 盖子再多开一会儿才关, 不然像是 "砸" 在关上的盖子上
+	private static final int LID_LINGER_TICKS = 4;
 
 	// 所有发依次起飞的时间窗口, 不含最后一发的飞行时间
 	// 42 + 18 = 60 tick, 所以整场表演最长 3 秒
@@ -63,6 +68,15 @@ public final class FlightAnimator {
 	private static final Map<UUID, Show> shows = new HashMap<>();
 	// 正在飞的物品模型
 	private static final List<Flying> flying = new ArrayList<>();
+	// 被我们打开了盖子的箱子, 用箱子的第一格坐标来认它
+	private static final Map<BlockPos, Lid> lids = new HashMap<>();
+
+	// 一个开着的箱盖, 以及它该在什么时候关上
+	private static final class Lid {
+		ServerLevel level;
+		Storage storage;
+		int closeAt;
+	}
 
 	// 一场归位表演: 按顺序一发一发地真实搬运, 并配上飞行动画
 	private static final class Show {
@@ -75,8 +89,6 @@ public final class FlightAnimator {
 		int next;
 		// 最后一件物品落地的时间, 到点才显示结果
 		int endTick;
-		// 这一场里已经弹过盖子的箱子
-		Set<Storage> opened = new HashSet<>();
 		// 真的搬成功了的物品种类, 结束时显示在动作栏
 		Set<Item> moved = new HashSet<>();
 
@@ -169,6 +181,16 @@ public final class FlightAnimator {
 				item.entity.setPos(positionAt(item, (double) item.age / FLIGHT_TICKS));
 			}
 		}
+
+		// 到点的箱子关盖
+		Iterator<Lid> open = lids.values().iterator();
+		while (open.hasNext()) {
+			Lid lid = open.next();
+			if (now >= lid.closeAt) {
+				setLid(lid.level, lid.storage, false);
+				open.remove();
+			}
+		}
 	}
 
 	// 执行一发: 先真实地搬, 搬成功了才配上动画, 保证看到的都是真的
@@ -178,10 +200,20 @@ public final class FlightAnimator {
 			return;
 		}
 		show.moved.add(shot.item());
-		// 临时: 每个箱子在一场表演里只弹一次盖子, 之后会改成跟着飞行时间开关
-		if (show.opened.add(shot.target())) {
-			shot.target().container().startOpen(show.player);
+
+		// 箱子 "知道" 自己要收东西了: 第一发起飞时开盖
+		// 之后每飞来一发, 都把关盖时间往后推到 "这一发落进去之后再等一会儿"
+		BlockPos key = shot.target().blocks().get(0);
+		Lid lid = lids.get(key);
+		if (lid == null) {
+			lid = new Lid();
+			lid.level = show.level;
+			lid.storage = shot.target();
+			lids.put(key, lid);
+			setLid(show.level, shot.target(), true);
 		}
+		lid.closeAt = Math.max(lid.closeAt, now + FLIGHT_TICKS + LID_LINGER_TICKS);
+
 		flying.add(launch(show.level, show.player, shot));
 		// 最后一件飞完的时间, 用来决定什么时候显示结果
 		show.endTick = Math.max(show.endTick, now + FLIGHT_TICKS);
@@ -226,6 +258,34 @@ public final class FlightAnimator {
 
 		item.entity = entity;
 		return item;
+	}
+
+	// 打开或关上箱盖, 并播放对应的原版音效
+	// 只改外观, 不碰原版的 "有几个人开着这个箱子" 计数, 所以不会和真正开箱的玩家打架
+	private static void setLid(ServerLevel level, Storage storage, boolean open) {
+		BlockPos first = storage.blocks().get(0);
+		BlockState state = level.getBlockState(first);
+		SoundEvent sound;
+		if (state.getBlock() instanceof ChestBlock chest) {
+			// 箱子: 发一个方块事件 "现在有几个人开着我", 大于 0 盖子就打开, 等于 0 就关上
+			// 大箱子两半各有一个盖子, 都要通知
+			for (BlockPos pos : storage.blocks()) {
+				level.blockEvent(pos, chest, 1, open ? 1 : 0);
+			}
+			// 用箱子自己的开关声, 陷阱箱, 铜箱子这些都会对
+			sound = open ? chest.getOpenChestSound() : chest.getCloseChestSound();
+		} else if (state.getBlock() instanceof BarrelBlock) {
+			// 木桶: 开没开是方块状态的一部分, 直接改
+			level.setBlock(first, state.setValue(BarrelBlock.OPEN, open), Block.UPDATE_ALL);
+			sound = open ? SoundEvents.BARREL_OPEN : SoundEvents.BARREL_CLOSE;
+		} else {
+			// 表演途中箱子被挖掉了, 什么都不做
+			return;
+		}
+		// 音量和音高照抄原版开箱
+		Vec3 center = centerOf(storage.blocks());
+		level.playSound(null, center.x, center.y, center.z, sound, SoundSource.BLOCKS,
+				0.5f, level.getRandom().nextFloat() * 0.1f + 0.9f);
 	}
 
 	// 物品落进箱子时 "啵" 一声, 用的是原版捡东西的音效
