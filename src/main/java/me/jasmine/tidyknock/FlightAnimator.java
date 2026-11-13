@@ -39,10 +39,14 @@ public final class FlightAnimator {
 	// 起点在玩家眼睛前方多远
 	private static final double START_AHEAD = 0.8;
 	// 抛的力度: 抬手高度 = 距离 x 这个比例, 再限制在最小和最大值之间
-	// 比例要大于 0.5 才有 "快-慢-快" 的感觉, 越大越明显
-	private static final double ARC_RATIO = 0.7;
-	private static final double MIN_ARC = 1.0;
-	private static final double MAX_ARC = 5.0;
+	// 曲线的最高点大约在 "起点和终点连线" 上方 抬手高度 x 3/4 的地方
+	// 所以最大 1.5 格, 最高点也只比连线高 1 格多一点, 小房子和树上也飞得进去
+	private static final double ARC_RATIO = 0.25;
+	private static final double MIN_ARC = 0.4;
+	private static final double MAX_ARC = 1.5;
+	// "快-慢-快" 的强度: 0 是匀速, 越接近 1 越明显
+	// 0.4 表示出手和落入时比平均快 40%, 中间比平均慢 40%
+	private static final double RHYTHM = 0.4;
 
 	// 随机散开: 每一发都偏一点点, 一把东西飞出去像个扇面
 	// 起点上下左右前后最多偏多少格, 像从手里一把抓出去
@@ -207,7 +211,7 @@ public final class FlightAnimator {
 				item.entity.discard();
 				air.remove();
 			} else {
-				item.entity.setPos(positionAt(item, (double) item.age / FLIGHT_TICKS));
+				item.entity.setPos(positionAt(item, rhythm((double) item.age / FLIGHT_TICKS)));
 			}
 		}
 
@@ -332,9 +336,15 @@ public final class FlightAnimator {
 				SoundEvents.ITEM_PICKUP, SoundSource.PLAYERS, LANDING_VOLUME, pitch);
 	}
 
+	// 节奏: 把均匀流逝的时间 t 掰成 "快-慢-快"
+	// 曲线管 "飞多高", 这个函数管 "飞多快", 两件事分开调, 互不影响
+	// 原理: 在 t 上叠加一个正弦波, 它在两头往前推, 在中间往后拉
+	// 正弦波在 t = 0 和 t = 1 时都是 0, 所以起点和终点不变
+	private static double rhythm(double t) {
+		return t + RHYTHM * Math.sin(2 * Math.PI * t) / (2 * Math.PI);
+	}
+
 	// t 从 0 到 1, 算出这一刻物品在三次贝塞尔曲线上的位置
-	// 不需要缓动函数: 控制点离得越远, 那一头就飞得越快
-	// 两个控制点都 "拉" 得够远, 中间自然就慢下来, 形成 "快-慢-快" 的抛物感
 	private static Vec3 positionAt(Flying item, double t) {
 		// 一层层 lerp 往下缩: 4 个点 -> 3 个点 -> 2 个点 -> 1 个点
 		Vec3 a = item.start.lerp(item.control1, t);
