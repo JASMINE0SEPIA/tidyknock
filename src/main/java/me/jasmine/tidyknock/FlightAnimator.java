@@ -39,7 +39,7 @@ public final class FlightAnimator {
 
 	// 随机散开: 每一发都偏一点点, 一把东西飞出去像个扇面
 	// 起点上下左右前后最多偏多少格, 像从手里一把抓出去
-	private static final double START_SPREAD = 0.15;
+	private static final double START_SPREAD = 0.3;
 	// 抛的高度最多高低多少 (0.2 = 20%)
 	private static final double ARC_SPREAD = 0.2;
 	// 路线向左右两侧最多偏多少格
