@@ -3,36 +3,27 @@
 	"id": "tidyknock",
 	"version": "${version}",
 	"name": "Tidy Knock",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"description": "Knock on a chest and your items find their way home.",
 	"authors": [
-		"Me!"
+		"JASMINE0SEPIA"
 	],
 	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
+		"homepage": "https://github.com/JASMINE0SEPIA/tidyknock",
+		"sources": "https://github.com/JASMINE0SEPIA/tidyknock",
+		"issues": "https://github.com/JASMINE0SEPIA/tidyknock/issues"
 	},
-	"license": "CC0-1.0",
+	"license": "MIT",
 	"icon": "assets/tidyknock/icon.png",
 	"environment": "*",
 	"entrypoints": {
 		"main": [
 			"me.jasmine.tidyknock.TidyKnock"
-		],
-		"client": [
-			"me.jasmine.tidyknock.client.TidyKnockClient"
 		]
 	},
-	"mixins": [
-		"tidyknock.mixins.json",
-		{
-			"config": "tidyknock.client.mixins.json",
-			"environment": "client"
-		}
-	],
 	"depends": {
 		"fabricloader": ">=0.20.1",
 		"minecraft": "~26.3",
 		"java": ">=25",
-		"fabric-api": "*"
+		"fabric-api": ">=0.166.2"
 	}
 }
